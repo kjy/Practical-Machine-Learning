@@ -1,0 +1,256 @@
+
+# Karen J Yang
+# June 21, 2014
+
+
+PREDICTING QUALITY OF BARBELL LIFTING ACTIVITY
+========================================================
+
+Exercise devices commonly measure quantity of exercise activity rather than quality. A recent 
+study "Qualitative Activity Recognition of Weight Lifting Exercises"(see reference below) gives
+focus to this more meaningful aspect of exercise activity, using data from Human Activity Recognition (HAR). 
+In this practical machine learning study, I use the data from the Weight Lifting Exercises data set to 
+apply a Random Forest model. The description of the original weight lifting study can be located 
+at the following URL site:
+
+        http://groupware.les.inf.puc-rio.br/har
+
+The training data set is available at: 
+
+        https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data set is available at:
+
+        https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+               
+        
+The markdown file makes use of R language in R version 3.0.3 (2014-03-06), "Warm Puppy" on platform "x86_64-apple-darwin10.8.0".        
+        
+        
+DESCRIPTION OF OUTCOME VARIABLE: CLASSE
+========================================================
+The outcome variable is `classe` and has factor levels labeled A-E, which corresponds to one of the five categories of  
+Unilateral Dumbbell Biceps Curl: A) performed correctly according to specification; B) incorrectly throwing elbow to front;
+C) incorrectly lifting the dumbbell only halfway; D) incorrectly lowering the dumbbell only halfway; and E) incorrectly throwing
+the hips to the front. Thus, category A is the only correct activity while the remaining four, B-E, describe incorrect activities.
+The distribution of the outcome variable is shown below in a bar plot.
+
+```{r}
+setwd("/Users/karenyang/Desktop/PracticalMachineLearning")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+              destfile="pml-training.csv",method="curl")              
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+              destfile="pml-testing.csv",method="curl")
+train <- read.csv("pml-training.csv")
+test <- read.csv("pml-testing.csv")
+print(object.size(train),units="Mb")
+object.size(test)
+dim(train) 
+dim(test) 
+# Look at distribution of outcome variable called classe
+barplot(table(train$classe), col = c("blue","orange","red","green","purple"),ylab="Frequency", 
+        xlab="Exercise Activity", main = "Barbell Activity per Class")
+```
+
+For the original study, six young health males between the ages of 20 to 28 were asked to perform one set of 10 repetitions 
+of the Unilateral Dumbbell Biceps Curl in five different ways, using a light weight of only 1.25 kg for safety reasons. 
+While these 6 participants were inexperienced weight lifters, they were under the supervision of an experienced weight lifter. 
+Below is the distribution of exercise activity per participant as captured by number of windows (each window is 2.5 seconds).
+
+```{r}
+# Plot
+install.packages("ggplot2")
+library(ggplot2)
+train$classe_Activity <-train$classe
+levels(train$classe_Activity) <- c("Correct Execution of Exercise","Incorrect Throw Elbow to Front","Incorrect Lift Dumbbell 
+                                   Halfway","Incorrect Lower dumbbell Halfway","Incorrect Throw Hips to Front")
+qplot(user_name, num_window, data=train,color=classe_Activity,xlab="Six participants",ylab=expression("Number of 
+                                Windows Capturing Activity"),main=expression("Bar Bell Lifting")) 
+train$classe_Activity <- NULL
+```
+
+REMOVING COLUMNS FILLED WITH MISSING VALUES, SUBSETTING, AND PARTITIONING DATA SET
+========================================================
+
+A function was used to identify the number of columns that were completely filled with missing values. The train data set was
+subsetted accordingly. A second sub-setting of the data set was performed to remove the sliding windows and time stamp variables: 
+`new_window`, `num_window`, `raw_timestamp_part_1`,`raw_timestamp_part_2`,`cvtd_timestamp`. Also, the serial counter variable `X`, 
+the participant name `user_name`, and all factor variables were removed. An additional variable, `yaw_arm.1` was removed because of
+discrepancy between the training and test data sets. Thus, the `train2` data set has 52 continuous predictors to match the test data set.
+Finally, the train data set was partitioned in a 70-30 split with 70% of the data allocated for building the model, using the 
+`training` data set and the remaining 30% of the data allocated to tune and test the model, using the `validation` data set.
+
+```{r}
+# Find the sum of NAs per column in data set; write a function    
+columnNAs <- function(y) {
+     nc <- ncol(y)
+     cNAs <- numeric(nc)
+     for (i in 1:nc) {
+            cNAs[i] <- sum(is.na(y[,i]))
+     }
+     cNAs
+}
+# call the function
+columnNAs(train)
+# Find columns that are NOT all NAs
+which(columnNAs(train)!=19216)
+# Subset train data set by columns that are NOT all NAs
+train1 <- train[,which(columnNAs(train)!=19216)]
+dim(train1)
+# Subset data set further to have only continous variables related to barbell lifting
+train2 <-train1[c(8,9,10,11,21,22,23,24,25,26,27,28,29,30,31,32,32,33,34,35,36,37
+                  ,38,39,40,41,42,49,50,51,61,62,63,64,65,66,67,68,69,70,71,72,73
+                  ,83,84,85,86,87,88,89,90,91,92,93)]
+dim(train2)
+
+train2$yaw_arm.1 <- NULL # This variable not in test data set so remove
+str(train2)
+
+# Make the test data set like the training data set in terms of the same predictors
+# call the function
+columnNAs(test)
+# Find columns that are NOT all NAs
+which(columnNAs(test)!=20)
+# Subset train data set by columns that are NOT all NAs
+test1 <- test[,which(columnNAs(test)!=20)]
+test2 <-test1[c(-1,-2,-3,-4,-5,-6,-7)] 
+str(test2)
+
+# Check variables are same across train and test data sets
+colnames(train2)==colnames(test2)
+colnames(train2[53]) # labeled "classe"--actual outcomes
+colnames(test2[53])  # labeled "problem_id"--serial counter
+
+
+# Use caret package 
+install.packages("caret")
+library(caret)
+
+# Partition data set between training and validation
+set.seed(1212)
+intrain <- createDataPartition(train2$classe, p = 0.7, list = FALSE)
+training = train2[intrain, ] # 70% split
+dim(training)
+validation <- train2[-intrain, ] # 30% split
+dim(validation)
+```
+
+BUILD RANDOM FOREST MODEL, USING TRAINING DATA SET
+========================================================
+Random Forest is used for the purpose of feature selection. It does so by growing many trees, hence
+a forest, through bootstrap sampling (sampling with replacement). At each node, a subset of predictors, 
+say m, is selected at random out of M total predictors. The best split on these m is used to split the 
+node. m is held constant as the forest grows. 
+
+According to Leo Breiman and Adele Cutler, cross-validation is estimated internally so a separate test 
+set to obtain the unbiased estimate of the test set error is not needed. Each tree is grown using a 
+different bootstrap sample such that about one-third of the cases are set aside and not used in the tree 
+construction. This reserved one-third portion is used get a classification.  j is the class that got most of 
+the votes every time case n was out of bag. An out of bag error estimate is obtained by taking the average 
+of the the proportion of times that class j is not equal to the true class of n when n was out of bag. 
+This gives an unbiased estimate.
+
+I expect the error rate for the model's predicted values to be overly optimistic since the model is built
+from the training data set from which it was generated from. The expectation is that the model's error rate for the
+validation data set, would be a more reliable estimate, lower than the error rate from the training data set,
+since it is an independent entity from which to gauge how well the model performed in terms of its correct 
+or incorrect classification. 
+
+```{r}
+# For training data set
+# source: http://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm#ooberr
+set.seed(1313)  
+tc <- trainControl(method = "oob")
+
+set.seed(1414)
+modelFit1 <- train(training$classe ~.,data=training,method="rf",prox=TRUE,importance=TRUE,trControl=tc)
+print(modelFit1) 
+print(modelFit1$finalModel)
+
+# Don't report prediction for training data set as model will be overly optimistic  
+# prediction_train <- predict(modelFit1, newdata=training)
+# confusionMatrix(prediction_train, training$classe)  # Accuracy is 1 (no errors)
+
+# Show variable importance plot
+variable_importance <-varImp(modelFit1,scale=FALSE)
+variable_importance
+plot(variable_importance)
+```
+
+UN-TUNED MODEL APPLIED TO VALIDATION AND TEST DATA SETS 
+========================================================
+In this part, I apply the un-tuned model to the validation data set.  Basically, this model uses
+all predictors to obtain the predicted values for the validation data set. The classification
+rate (correct and incorrect) is obtained via the Confusion Matrix. Finally, the un-tuned model
+is applied to the test data set to obtain predictions for 20 observations.
+
+```{r}
+# For validation data set--the un-tuned model uses all predictors
+prediction_valid <- predict(modelFit1, newdata=validation)
+# Out-of-sample error rate (classification rate)
+confusionMatrix(prediction_valid,validation$classe) 
+
+# prediction for held out data set-- test data set uses all  predictors
+prediction_test1 <- predict(modelFit1,newdata=test2) 
+
+# Predictions for 20 observations
+prediction_test1
+```
+
+TUNED MODEL APPLIED TO VALIDATION AND TEST DATA SETS
+========================================================
+Here, I take the top 20 variables of importance and create a new training data set called `training_tuned`.
+I set the train control method to be out of bag and run a second model fit with this data set of 20 variables.
+I then apply `modelFit2` to the validation data set and obtain the classification rate, using the Confusion Matrix.
+Comparing the classification rate of the un-tuned model against the tuned model gives us a way to evaluate
+model performance.
+
+
+```{r}
+# For validation data set--the tuned model using 20 predictors with outcome variable
+training_tuned <-training[c(1,2,3,7,10,13,14,16,22,27,34,35,36,37,38,39,41,48,49,52,53)] 
+set.seed(1313)  
+tc <- trainControl(method = "oob")
+set.seed(1515)
+modelFit2 <- train(training_tuned$classe ~.,data=training_tuned,method="rf",prox=TRUE,importance=TRUE,trControl=tc)
+print(modelFit2) 
+print(modelFit2$finalModel)
+
+# prediction for validation data set
+prediction_valid2 <- predict(modelFit2, newdata=validation[c(1,2,3,7,10,13,14,16,22,27,34,35,36,37,38,39,41,48,49,52,53)]) 
+confusionMatrix(prediction_valid2,validation$classe) 
+
+# Apply tuned model to test data set
+prediction_test2 <- predict(modelFit2,newdata=test2[c(1,2,3,7,10,13,14,16,22,27,34,35,36,37,38,39,41,48,49,52,53)])
+prediction_test2
+```
+
+SUMMARY
+========================================================
+
+Predicting barbell weight lifting activity involved building a training model, using Random Forest, which was then
+tested and tuned, using a validation data set. The out-of-bag estimate of the error rate showed 0.72%, though this 
+is overly optimistic, given that it is based on the training data set. The out-of-sample error rate is 1-0.9935, 
+which is 0.0065. This is because the Confusion Matrix's accuracy is 0.9935, essentially 99%.   
+The un-tuned model with 52 predictors performed exceptionally well on the validation data set of 5885 observations. 
+Turning to the test data set, the model correctly classifies all 20 observations, using the same 52 predictors. 
+
+Can a tuned model perform the same, or possibly better than, the un-tuned model? I used the the variable importance 
+plot across all five factor categories to identify a subset of predictors that can be used to make a tuned model. 
+Of the 52 predictors, I select the top 20 variable of importance, identified by the first model fit, 
+and applied it against the training data set to generate a second model fit. Again, I apply the model to the
+validation data set and obtain an accuracy rate of 0.9918, essentially the same result of 99%. So, the tuned model
+performs equally well as the un-tuned model. Further, using the test data set, the tuned model correctly predicts
+all 20 observations. If given a choice between the un-tuned or tuned model, given that they performed equally well on
+the validation data set and made correct predictions on the  test data set, I would choose the tuned model since it is
+simpler and it is the raison d'etre for using random forest,namely feature selection. 
+
+
+REFERENCES
+========================================================
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Random Forests by Leo Breiman and Adele Cutler. URL: http://www.stat.berkeley.edu/%7Ebreiman/RandomForests/cc_home.htm. Accessed 6/18/2014.
+
+Coursera: "Practical Machine Learning". Online course given by Jeff Leek. The Johns Hopkins Bloomberg School of Public Health. Dates: June 18-22, 2014. URL: https://class.coursera.org/predmachlearn-002.
